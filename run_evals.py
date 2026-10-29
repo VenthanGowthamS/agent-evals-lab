@@ -61,6 +61,9 @@ def main():
     Path("results").mkdir(exist_ok=True)
     Path("results/results.json").write_text(json.dumps(results, indent=2, default=str))
     write_report(results, args)
+    from report_html import build
+    Path("results/report.html").write_text(build(results, f"Agent eval: {args.agent} ({args.model if args.agent == 'ollama' else 'mock'}), k={args.k}"), encoding="utf-8")
+    print("Wrote results/report.html")
 
 
 def write_report(results, args):

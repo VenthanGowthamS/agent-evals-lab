@@ -68,6 +68,15 @@ Interactive before/after view: open `results/report.html`.
 | restraint (decline correctly) | 100% (see caveat below) |
 | escalation | 100% |
 
+### Run environment (proof it ran locally)
+
+Laptop with an Intel CPU and an NVIDIA GeForce MX350 (2 GB VRAM), Windows, Ollama serving `qwen2.5:3b`.
+During the k=5 run, Task Manager showed the CPU near 95% and the GPU at about 35%, so the model ran mostly on CPU with partial GPU use, not fully on GPU.
+
+![Task Manager during the eval run](docs/eval-run-task-manager.png)
+
+![Terminal output of the eval run](docs/eval-run-terminal.png)
+
 ## Findings (from reading the transcripts, not just the scores)
 
 1. **The model is much better at refusing than at finishing.** Action tasks pass only 27% of the time. In `refund_partial` it looked the order up in 4 of 5 runs, then stopped without issuing the refund. Replies still sounded confident, which is why the "before" column in the HTML report shows every reply as fine.

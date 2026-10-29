@@ -9,6 +9,14 @@ I built a small AI "customer-support agent" that can refund orders, then built a
 
 ---
 
+## At a glance
+
+![The method: six steps and the headline numbers](docs/infographic-1-method.png)
+
+![The results: every task, run five times](docs/infographic-2-results.png)
+
+---
+
 ## 1. The short version
 
 | Question | Answer |
@@ -59,7 +67,11 @@ Think of it as a small QA lab with five parts.
 6. Read the transcripts, not only the scores. That revealed a flaw in my own grader (see section 6).
 7. Ran the full test: 12 scenarios x 5 runs = 60 runs. Built the before/after report from it.
 
-Run environment: Windows laptop, Intel CPU plus an NVIDIA GeForce MX350 with 2 GB of memory. The model ran mostly on the CPU with partial GPU use (see `docs/` for the screenshots).
+Run environment: Windows laptop, Intel CPU plus an NVIDIA GeForce MX350 with 2 GB of memory. The model ran mostly on the CPU with partial GPU use (screenshots below).
+
+![Task Manager during the eval run](docs/eval-run-task-manager.png)
+
+![Terminal output of the eval run](docs/eval-run-terminal.png)
 
 ---
 
@@ -163,7 +175,7 @@ evals/graders.py     outcome, step-order and efficiency checks, plus a judge tem
 run_evals.py         runs everything k times and writes the reports
 report_html.py       builds the before/after HTML report
 results/             latest report and raw data
-docs/                screenshots of the run environment
+docs/                infographics and screenshots of the run
 ```
 
 The method follows the standard agent-eval approach of real-failure tasks, restraint cases, repeated runs on a fresh environment, code graders first and reliability measured as pass^k.

@@ -9,6 +9,8 @@ I built a small AI "customer-support agent" that can refund orders. Then I built
 
 ## At a glance
 
+![All 12 scenarios running, with the real results](docs/scenarios-flow.gif)
+
 ![The method: six steps and the headline numbers](docs/infographic-1-method.png)
 
 ![The results: every task, run five times](docs/infographic-2-results.png)

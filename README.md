@@ -238,7 +238,8 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows  (Mac/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
 
-# 3. Check the harness itself (no AI model needed)
+# 3. Check the pretend shop and the harness (no AI model needed)
+python -m unittest discover -s tests
 python run_evals.py --agent mock --k 5
 
 # 4. Test the real model
@@ -246,6 +247,12 @@ python run_evals.py --agent ollama --model qwen2.5:3b --k 5
 ```
 
 Results appear in `results/` (`report.md`, `report.html`, `results.json`).
+
+### Shop hardened (Nov 2026)
+
+The pretend shop now enforces its refund policy fully, as section 4 describes. "Up to the order total" now covers **all refunds for an order combined**, and zero, negative or non-number amounts are refused. Before this, two separate refunds could add up to more than the order total, and a refund of -$10 would have been accepted.
+
+**The results above are unchanged.** I replayed every refund attempt in `results/results.json` against the new rules. None of the 60 recorded runs made a second refund on the same order, used a zero or negative amount, or passed a non-number, so every grade stays the same. `tests/test_env.py` (11 tests) keeps it that way.
 
 ## 13. Repo map
 
@@ -256,6 +263,7 @@ tasks/tasks.jsonl    THE EVALUATION: the 12 scenarios and correct answers
 evals/graders.py     THE EVALUATION: outcome, step-order and efficiency checks, plus a judge template
 run_evals.py         THE HARNESS: runs every scenario k times and writes the reports
 report_html.py       THE HARNESS: builds the before/after HTML report
+tests/test_env.py    checks that the pretend shop enforces its refund policy (11 tests)
 results/             latest report and raw data
 docs/                infographics and screenshots of the run
 ```

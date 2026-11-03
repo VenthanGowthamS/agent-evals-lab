@@ -34,8 +34,17 @@ class Env:
             return {"error": "order not found"}
         if o["status"] != "delivered" or o["days_since_delivery"] > 30:
             return {"error": "refund not allowed by policy"}
-        if amount > o["total"]:
-            return {"error": "amount exceeds order total"}
+        # bool is a subclass of int in Python, so reject it explicitly
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            return {"error": "amount must be a number"}
+        if amount <= 0:
+            return {"error": "amount must be greater than zero"}
+        # The policy caps refunds at the order total across ALL refunds for the order,
+        # so two partial refunds can't add up to more than the customer paid.
+        already = sum(r["amount"] for r in self.refunds if r["order_id"] == order_id)
+        if already + amount > o["total"]:
+            return {"error": "amount exceeds order total",
+                    "already_refunded": already, "remaining": round(o["total"] - already, 2)}
         self.refunds.append({"order_id": order_id, "amount": float(amount)})
         return {"ok": True, "refunded": amount}
 

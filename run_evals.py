@@ -2,33 +2,15 @@
 
   python run_evals.py --agent ollama --model qwen2.5:3b --k 5
   python run_evals.py --agent mock --k 5          # no LLM needed; validates the harness
+  python run_evals.py --agent mock --out runs/try1   # keep results/ (the recorded baseline) untouched
 """
 import argparse
 import json
-import random
-import time
 from collections import defaultdict
 from pathlib import Path
 
-from agent.env import Env
-from agent.agent import run_ollama, run_mock
-from evals.graders import grade_all
-
-
-def load_tasks(path):
-    return [json.loads(l) for l in Path(path).read_text().splitlines() if l.strip()]
-
-
-def run_trial(task, args, rng):
-    env = Env()          # fresh environment every trial: runs cannot contaminate each other
-    t0 = time.time()
-    if args.agent == "ollama":
-        transcript, final = run_ollama(env, task["prompt"], model=args.model)
-    else:
-        transcript, final = run_mock(env, task["prompt"], task=task, noise=args.noise, rng=rng)
-    grades = grade_all(env, task)
-    return {"grades": grades, "transcript": transcript, "final": final,
-            "latency_s": round(time.time() - t0, 2), "tool_calls": len(env.calls)}
+from evals.stats import wilson
+from harness.runner import run_suite, summarize
 
 
 def main():
@@ -39,34 +21,28 @@ def main():
     ap.add_argument("--noise", type=float, default=0.25, help="mock agent mistake rate")
     ap.add_argument("--tasks", default="tasks/tasks.jsonl")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out", default="results", help="folder for report.md, report.html and results.json")
     args = ap.parse_args()
-    rng = random.Random(args.seed)
 
     results = {}
-    for task in load_tasks(args.tasks):
-        trials = [run_trial(task, args, rng) for _ in range(args.k)]
-        passes = [t["grades"]["pass"] for t in trials]
-        results[task["id"]] = {
-            "capability": task["capability"],
-            "passes": sum(passes), "k": args.k,
-            "pass_at_k": any(passes),          # at least one run succeeded
-            "pass_pow_k": all(passes),         # every run succeeded (what users feel)
-            "avg_tool_calls": round(sum(t["tool_calls"] for t in trials) / args.k, 2),
-            "avg_latency_s": round(sum(t["latency_s"] for t in trials) / args.k, 2),
-            "trials": trials,
-        }
-        r = results[task["id"]]
-        print(f"{task['id']:26s} {r['passes']}/{args.k}  pass@k={r['pass_at_k']!s:5}  pass^k={r['pass_pow_k']!s:5}")
+    cfg = {k: getattr(args, k) for k in ("agent", "model", "k", "noise", "tasks", "seed")}
+    for ev in run_suite(cfg):
+        if ev["type"] == "task_finished":
+            r = ev["record"]
+            print(f"{ev['task_id']:26s} {r['passes']}/{args.k}  pass@k={r['pass_at_k']!s:5}  pass^k={r['pass_pow_k']!s:5}")
+        elif ev["type"] == "run_finished":
+            results = ev["results"]
 
-    Path("results").mkdir(exist_ok=True)
-    Path("results/results.json").write_text(json.dumps(results, indent=2, default=str))
-    write_report(results, args)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "results.json").write_text(json.dumps(results, indent=2, default=str))
+    write_report(results, args, out)
     from report_html import build
-    Path("results/report.html").write_text(build(results, f"Agent eval: {args.agent} ({args.model if args.agent == 'ollama' else 'mock'}), k={args.k}"), encoding="utf-8")
-    print("Wrote results/report.html")
+    (out / "report.html").write_text(build(results, f"Agent eval: {args.agent} ({args.model if args.agent == 'ollama' else 'mock'}), k={args.k}"), encoding="utf-8")
+    print(f"Wrote {out}/report.html")
 
 
-def write_report(results, args):
+def write_report(results, args, out=Path("results")):
     n = len(results)
     avg = sum(r["passes"] / r["k"] for r in results.values()) / n
     pk = sum(r["pass_at_k"] for r in results.values()) / n
@@ -90,8 +66,32 @@ def write_report(results, args):
         if bad:
             g = bad[0]["grades"]
             lines.append(f"- **{tid}**: outcome: {g['outcome']['note']} | trajectory: {g['trajectory']['note']}")
-    Path("results/report.md").write_text("\n".join(lines) + "\n")
-    print("\nWrote results/report.md and results/results.json")
+    lines += extra_sections(results)
+    (out / "report.md").write_text("\n".join(lines) + "\n")
+    print(f"\nWrote {out}/report.md and {out}/results.json")
+
+
+def extra_sections(results):
+    """v2 sections: uncertainty, reply-versus-reality, right-reason restraint, failure labels."""
+    s = summarize(results)
+    lines = ["", "## How sure are these numbers? (95% Wilson interval)", "",
+             f"Overall: {s['passed']}/{s['trials']} trials passed, so the true pass rate is plausibly "
+             f"between {s['ci95'][0]:.0%} and {s['ci95'][1]:.0%}.", "",
+             "| Task | Passes | Plausible range |", "|---|---|---|"]
+    for tid, r in results.items():
+        lo, hi = wilson(r["passes"], r["k"])
+        lines.append(f"| {tid} | {r['passes']}/{r['k']} | {lo:.0%} to {hi:.0%} |")
+    lines += ["", "## Extra checks (reported beside the pass rule, not part of it)", "",
+              "| Task | Reply claims an action that never happened | Declined without looking the order up | Refund attempts the shop blocked |",
+              "|---|---|---|---|"]
+    for tid, r in results.items():
+        claim = sum(not t["grades"]["claim"]["pass"] for t in r["trials"])
+        ungr = sum(not t["grades"]["grounded"]["pass"] for t in r["trials"])
+        blocked = sum(t.get("blocked_attempts", 0) for t in r["trials"])
+        lines.append(f"| {tid} | {claim}/{r['k']} | {ungr}/{r['k']} | {blocked} |")
+    lines += ["", "## How the failed trials failed", "", "| Failure | Trials |", "|---|---|"]
+    lines += [f"| {k} | {v} |" for k, v in s["failure_labels"].items()] or ["| (none) | 0 |"]
+    return lines
 
 
 if __name__ == "__main__":

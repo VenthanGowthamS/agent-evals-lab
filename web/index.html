@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-evals-lab: 3D replay</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg:#0f1420; --panel:#161d2ecc; --line:#2a3550; --ink:#e8ecf5; --quiet:#9aa6bf;
+          --pass:#2ecc71; --fail:#ff5a4d; --warn:#f5a623; --accent:#6ea0ff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+              font:14px/1.45 system-ui,"Segoe UI",Roboto,Arial,sans-serif; overflow:hidden; }
+  canvas#scene { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  header { position:fixed; top:0; left:0; right:0; padding:10px 16px; display:flex; gap:14px; align-items:center;
+           flex-wrap:wrap; background:linear-gradient(#0f1420f2,#0f142000); pointer-events:none; z-index:3; }
+  header h1 { font-size:16px; margin:0; font-weight:650; }
+  header .sub { color:var(--quiet); font-size:12.5px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto; justify-content:flex-end; max-width:calc(100vw - 420px); pointer-events:auto; }
+  .chip { background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:3px 11px; font-size:12.5px; white-space:nowrap; }
+  .chip b { font-weight:650; }
+  .chip.bad b { color:var(--fail); } .chip.warn b { color:var(--warn); } .chip.good b { color:var(--pass); }
+  #panel { position:fixed; left:14px; top:64px; bottom:76px; width:min(360px,calc(100vw - 28px)); z-index:2;
+           background:var(--panel); backdrop-filter:blur(8px); border:1px solid var(--line); border-radius:14px;
+           padding:14px 16px; overflow:auto; }
+  #panel h2 { font-size:15px; margin:0 0 2px; word-break:break-word; }
+  #panel .meta { color:var(--quiet); font-size:12.5px; margin-bottom:10px; }
+  .label { text-transform:uppercase; letter-spacing:.06em; font-size:10.5px; color:var(--quiet); margin:12px 0 4px; }
+  .bubble { border-radius:12px; padding:9px 12px; border:1px solid var(--line); background:#1d2740; }
+  .bubble.customer { border-left:3px solid var(--accent); }
+  .bubble.agent { border-left:3px solid #c7a6ff; min-height:38px; }
+  .bubble.lie { border-color:var(--fail); box-shadow:0 0 0 1px var(--fail) inset; }
+  .lie-note { color:var(--fail); font-size:12.5px; margin-top:5px; display:none; }
+  ol#steps { margin:0; padding:0; list-style:none; }
+  ol#steps li { padding:6px 0 6px 26px; position:relative; border-bottom:1px dashed #2a355066; opacity:.28; transition:opacity .25s; }
+  ol#steps li.on { opacity:1; }
+  ol#steps li::before { content:attr(data-n); position:absolute; left:0; top:6px; width:18px; height:18px; border-radius:50%;
+                        background:#26324f; font-size:11px; text-align:center; line-height:18px; }
+  ol#steps li.blocked::before { background:var(--warn); color:#201400; }
+  ol#steps li.ok::before { background:var(--pass); color:#02210f; }
+  ol#steps code { font:12px ui-monospace,Consolas,monospace; color:#cfe0ff; }
+  ol#steps .res { color:var(--quiet); font-size:12.5px; display:block; }
+  ol#steps .none { opacity:1; color:var(--quiet); padding-left:0; } ol#steps .none::before { display:none; }
+  #lamps { display:grid; gap:6px; }
+  .lamp { display:flex; gap:9px; align-items:flex-start; opacity:.3; transition:opacity .3s; }
+  .lamp.on { opacity:1; }
+  .lamp i { flex:none; width:12px; height:12px; border-radius:50%; margin-top:4px; background:#3a4666; }
+  .lamp.on.pass i { background:var(--pass); box-shadow:0 0 10px var(--pass); }
+  .lamp.on.fail i { background:var(--fail); box-shadow:0 0 10px var(--fail); }
+  .lamp span { font-size:12.5px; color:var(--quiet); display:block; }
+  .lamp .extra { display:inline-block; font-size:10px; border:1px solid var(--line); border-radius:6px; padding:0 5px; margin-left:6px; color:var(--quiet); }
+  #verdict { margin-top:12px; padding:9px 12px; border-radius:10px; font-weight:650; display:none; }
+  #verdict.pass { display:block; background:#12351f; color:#8df0b4; } #verdict.fail { display:block; background:#3a1512; color:#ffb0a8; }
+  #verdict small { display:block; font-weight:400; opacity:.9; }
+  #bar { position:fixed; left:0; right:0; bottom:0; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); display:flex; gap:8px; justify-content:center;
+         flex-wrap:wrap; z-index:3; background:linear-gradient(#0f142000,#0f1420f2); }
+  button, select { font:inherit; color:var(--ink); background:#1d2740; border:1px solid var(--line); border-radius:10px; padding:8px 13px; cursor:pointer; }
+  button:hover { border-color:var(--accent); } button.primary { background:#2b4a8f; border-color:#4f78cf; }
+  button:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  #tip { position:fixed; pointer-events:none; z-index:4; background:#0b0f18f0; border:1px solid var(--line); border-radius:8px;
+         padding:6px 9px; font-size:12.5px; display:none; max-width:260px; }
+  #card { position:fixed; z-index:2; transform:translate(-50%,-100%); background:#0b0f18f0; border:1px solid var(--line);
+          border-radius:10px; padding:7px 10px; font-size:12.5px; max-width:230px; display:none; pointer-events:none; }
+  #card.blocked { border-color:var(--warn); color:#ffd89a; } #card.ok { border-color:var(--pass); }
+  #hint { position:fixed; right:16px; bottom:70px; z-index:2; color:var(--quiet); font-size:12.5px; text-align:right; max-width:260px; }
+  #live { display:none; }
+  #msg { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:5; color:var(--quiet); padding:24px; text-align:center; }
+  @media (max-width:760px) {
+    #panel { top:auto; bottom:62px; left:8px; right:8px; width:auto; height:40vh; padding:10px 12px; }
+    #hint, header .sub, #step, #live { display:none !important; }
+    header { padding:8px 10px; gap:6px; } header h1 { font-size:14px; }
+    .chips { max-width:100%; flex-wrap:nowrap; overflow-x:auto; justify-content:flex-start; margin-left:0; scrollbar-width:none; }
+    .chip { font-size:11.5px; }
+    #bar { gap:5px; padding:8px 6px calc(8px + env(safe-area-inset-bottom)); flex-wrap:nowrap; }
+    #bar button, #bar select { padding:8px 8px; font-size:12.5px; white-space:nowrap; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
+</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<canvas id="scene" aria-label="3D view of the pretend shop and the wall of eval results"></canvas>
+<header>
+  <div><h1>agent-evals-lab: 3D replay</h1><div class="sub" id="runname">Every block is one graded run of the AI agent. Click a block to replay it.</div></div>
+  <div class="chips" id="chips"></div>
+</header>
+<aside id="panel" aria-live="polite">
+  <h2 id="t-name">Loading…</h2>
+  <div class="meta" id="t-meta"></div>
+  <div class="label">Customer says</div>
+  <div class="bubble customer" id="t-prompt"></div>
+  <div class="label">What the agent did</div>
+  <ol id="steps"></ol>
+  <div class="label">What the agent said</div>
+  <div class="bubble agent" id="t-final"></div>
+  <div class="lie-note" id="t-lie"></div>
+  <div class="label">Graders</div>
+  <div id="lamps"></div>
+  <div id="verdict"></div>
+</aside>
+<div id="hint">Drag to look around · scroll to zoom<br>Green block = run passed · red = failed</div>
+<div id="bar">
+  <button id="prev" title="Previous run (left arrow)">◀ Prev</button>
+  <button id="play" class="primary" title="Play or pause (space)">⏸ Pause</button>
+  <button id="step" title="One step at a time">Step</button>
+  <button id="next" title="Next run (right arrow)">Next ▶</button>
+  <button id="nextfail" title="Jump to the next failed run (F)">Next failed</button>
+  <select id="speed" aria-label="Playback speed"><option value="0.6">Slow</option><option value="1" selected>Normal</option><option value="2.2">Fast</option></select>
+  <button id="live" title="Start a fresh run of the scripted mock agent through the local API">Run mock eval live</button>
+</div>
+<div id="tip"></div><div id="card"></div><div id="msg">Loading the recorded runs…</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

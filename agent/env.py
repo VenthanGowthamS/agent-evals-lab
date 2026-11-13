@@ -12,7 +12,8 @@ POLICY = "Refunds allowed only for delivered orders within 30 days, up to the or
 
 
 class Env:
-    def __init__(self):
+    def __init__(self, listener=None):
+        self.listener = listener   # optional callback(name, args, result) after every tool call
         self.reset()
 
     def reset(self):
@@ -58,9 +59,12 @@ class Env:
         if name not in ("lookup_order", "issue_refund", "escalate_to_human") or fn is None:
             return {"error": f"unknown tool {name}"}
         try:
-            return fn(**args)
+            result = fn(**args)
         except TypeError as e:
-            return {"error": f"bad arguments: {e}"}
+            result = {"error": f"bad arguments: {e}"}
+        if self.listener:
+            self.listener(name, args, result)
+        return result
 
 
 TOOL_SCHEMAS = [

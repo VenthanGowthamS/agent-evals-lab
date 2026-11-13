@@ -1,7 +1,7 @@
 // 3D replay of agent eval runs. Reads results.json (recorded) or a run from the local API.
 // Plain Three.js, no build step: open web/index.html through any static server.
 import * as THREE from 'three';
-import { OrbitControls } from './vendor/OrbitControls.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const $ = (id) => document.getElementById(id);
 const C = { pass: 0x2ecc71, fail: 0xff5a4d, warn: 0xf5a623, accent: 0x6ea0ff, floor: 0x18203a, dim: 0x2a3550,

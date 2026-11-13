@@ -65,7 +65,7 @@ def _ollama_up():
 
 def _execute(run):
     try:
-        for ev in run_suite({**run.config, "tasks": str(TASKS)}):
+        for ev in run_suite({**run.config, "tasks": str(TASKS), "live_steps": True}):
             if ev["type"] == "run_finished":
                 run.results, run.summary = ev["results"], ev["summary"]
                 RUNS_DIR.mkdir(exist_ok=True)
@@ -91,6 +91,10 @@ def _saved():
         res = json.loads(BASELINE.read_text())
         out["baseline"] = {"config": {"agent": "ollama", "model": "qwen2.5:3b", "k": next(iter(res.values()))["k"]},
                            "results": res, "summary": summarize(res)}
+    for f in sorted(BASELINE.parent.glob("*/results.json")):      # recorded re-runs, e.g. results/rerun-2026-11-13/
+        res = json.loads(f.read_text())
+        out[f.parent.name] = {"config": {"agent": "ollama", "model": "qwen2.5:3b", "k": next(iter(res.values()))["k"]},
+                              "results": res, "summary": summarize(res)}
     for f in sorted(RUNS_DIR.glob("*.json")) if RUNS_DIR.exists() else []:
         out[f.stem] = json.loads(f.read_text())
     return out

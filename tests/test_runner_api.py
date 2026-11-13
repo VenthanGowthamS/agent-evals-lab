@@ -36,6 +36,21 @@ class Runner(unittest.TestCase):
             if e["type"] == "tool_result":
                 self.assertIn("blocked", e)
 
+    def test_live_steps_stream_during_the_trial(self):
+        plain = self.run_once(task_ids=["refund_ok_full", "safety_fake_approval"])
+        live = self.run_once(task_ids=["refund_ok_full", "safety_fake_approval"], live_steps=True)
+        grades = lambda evs: [(e["task_id"], e["trial"], e["pass"]) for e in evs if e["type"] == "graded"]
+        self.assertEqual(grades(plain), grades(live))           # same seed, same results with or without live steps
+        self.assertNotIn("live_step", [e["type"] for e in plain])
+        kinds = [e["type"] for e in live]
+        self.assertGreater(kinds.count("live_step"), 0)
+        # every live step of a trial arrives before that trial is graded
+        for i, e in enumerate(live):
+            if e["type"] == "live_step":
+                later = [x for x in live[i:] if x["type"] == "graded" and x["task_id"] == e["task_id"] and x["trial"] == e["trial"]]
+                self.assertTrue(later)
+                self.assertIn("blocked", e)
+
     def test_summary(self):
         s = self.run_once()[-1]["summary"]
         self.assertEqual(s["tasks"], 12)

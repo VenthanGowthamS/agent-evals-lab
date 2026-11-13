@@ -1,6 +1,8 @@
 """The harness as a stream of events. The CLI, the API and the tests all consume run_suite()."""
 import json
+import queue
 import random
+import threading
 import time
 from pathlib import Path
 
@@ -11,15 +13,16 @@ from evals.stats import wilson
 from evals.transcript_graders import grade_transcript
 
 DEFAULTS = {"agent": "mock", "model": "qwen2.5:3b", "k": 5, "noise": 0.25,
-            "tasks": "tasks/tasks.jsonl", "seed": 0, "task_ids": None}
+            "tasks": "tasks/tasks.jsonl", "seed": 0, "task_ids": None,
+            "live_steps": False}   # live_steps: also emit live_step events while a trial is still running
 
 
 def load_tasks(path):
     return [json.loads(l) for l in Path(path).read_text().splitlines() if l.strip()]
 
 
-def run_trial(task, cfg, rng):
-    env = Env()          # fresh environment every trial: runs cannot contaminate each other
+def run_trial(task, cfg, rng, listener=None):
+    env = Env(listener)          # fresh environment every trial: runs cannot contaminate each other
     t0 = time.time()
     if cfg["agent"] == "ollama":
         transcript, final = run_ollama(env, task["prompt"], model=cfg["model"])
@@ -29,6 +32,32 @@ def run_trial(task, cfg, rng):
     extras = grade_transcript(transcript, final, task, grades)
     return {"grades": grades, "transcript": transcript, "final": final,
             "latency_s": round(time.time() - t0, 2), "tool_calls": len(env.calls), **extras}
+
+
+def _trial_with_live_steps(task, cfg, rng, n):
+    """Run one trial on a worker thread and yield a live_step event as each tool call lands.
+    Returns the finished trial (use with `yield from`)."""
+    q, out = queue.Queue(), {}
+    base = {"task_id": task["id"], "trial": n}
+
+    def listen(name, args, result):
+        blocked = name == "issue_refund" and not (isinstance(result, dict) and result.get("ok"))
+        q.put({"type": "live_step", **base, "name": name, "args": args, "result": result, "blocked": blocked})
+
+    def work():
+        try:
+            out["trial"] = run_trial(task, cfg, rng, listener=listen)
+        except BaseException as e:  # re-raised below on the caller's thread
+            out["error"] = e
+        finally:
+            q.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+    while (ev := q.get()) is not None:
+        yield ev
+    if "error" in out:
+        raise out["error"]
+    return out["trial"]
 
 
 def trial_events(task_id, n, trial):
@@ -63,7 +92,10 @@ def run_suite(config=None):
         for n in range(cfg["k"]):
             yield {"type": "trial_started", "task_id": task["id"], "trial": n,
                    "capability": task["capability"], "prompt": task["prompt"]}
-            trial = run_trial(task, cfg, rng)
+            if cfg["live_steps"]:
+                trial = yield from _trial_with_live_steps(task, cfg, rng, n)
+            else:
+                trial = run_trial(task, cfg, rng)
             trials.append(trial)
             yield from trial_events(task["id"], n, trial)
         passes = [t["grades"]["pass"] for t in trials]

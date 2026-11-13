@@ -11,7 +11,12 @@ I built a small AI "customer-support agent" that can refund orders. Then I built
 
 > **[Open the 3D replay](https://venthangowthams.github.io/agent-evals-lab/web/)** · no install, works on a phone
 
-Every block on the wall is one graded run: green passed, red failed. Click a block and the agent walks through that run in the pretend shop: it visits the order shelf, the till or the manager's door, and a refund the shop refuses bounces off the policy gate. Then the grader lamps light up.
+**What you see:** a customer walks into a pretend shop and asks the AI agent (a real small model, `qwen2.5:3b`) for something. The agent can only act through three tools, and you watch it use them: it pulls the parcel off the **order shelf** (`lookup_order`), takes a refund to the **till** (`issue_refund`), or knocks on the **manager's office** (`escalate_to_human`), and the manager, a human, steps out. Then it walks back and gives its reply, and the five **grader lamps** score the run.
+
+- **The refund policy, made visible.** Every refund passes through a policy check at the till with four lights: the order exists, it was delivered, within 30 days, and the amount fits what is left of the total. The side panel shows each rule passing or failing with the real numbers, for example "$500 asked, only $40 of $40 left". A refund the shop refuses bounces back.
+- **The loop, live.** The "How it works" panel follows the loop being tested, one step at a time: customer asks, agent decides, tool call, shop answers, graders score.
+- **Every block on the wall is one real run:** green passed, red failed. Click any block to replay it, or use *Next failed*. Links like `?play=over_total:1` open a given run.
+- **Two recorded runs of the same model** to switch between (see below), and a **live mode** when you run it locally.
 
 v2 also adds two extra checks, failure labels and uncertainty ranges. They were applied to the same 60 recorded runs, with no new model calls and no change to any existing grade:
 
@@ -25,12 +30,30 @@ v2 also adds two extra checks, failure labels and uncertainty ranges. They were 
 
 The two extra checks are reported beside the pass rule and are not part of it yet. Details are at the end of [results/report.md](results/report.md).
 
-There is also a small API (FastAPI) that starts a run and streams its events, so the 3D wall can fill in live:
+### Watch a live run
+
+The small API (FastAPI) starts a run and streams its events. With Ollama running, the page gets a **Live: qwen2.5 (Ollama)** button: the model answers the 12 scenarios right now, every tool call appears in the live log as it happens, and each run is replayed in the shop as soon as it is graded. **Live: mock agent** does the same with the scripted agent, in a second, with no model.
 
 ```bash
 pip install -r requirements.txt
 uvicorn api.main:app            # then open http://localhost:8000
 ```
+
+### Same model, run again
+
+I ran the full evaluation a second time on 13 Nov 2026, with the v2 runner on a different machine ([results/rerun-2026-11-13](results/rerun-2026-11-13/)). Same model, same 12 scenarios, 5 runs each:
+
+| | Recorded run (3 Nov) | Re-run (13 Nov) |
+|---|---|---|
+| Runs that did the right thing | 43 of 60 (72%) | 47 of 60 (78%) |
+| Plausible range (95%) | 59% to 81% | 66% to 87% |
+| Scenarios passed every time (pass^5) | 7 of 12 | 8 of 12 |
+| Action group (do the refund) | 4 of 15 | 4 of 15 |
+| Safety group (resist tricks) | 9 of 15 | 13 of 15 |
+| Replies claiming a refund that never happened | 9 | 4 |
+| Refusals made without checking the order | 8 | 7 |
+
+The two ranges overlap, so the headline number has **not** really changed. A small model gives different answers each time, and 60 runs can't separate 72% from 78%. What *is* stable is the weak spot: the agent still completes only 4 of 15 genuine refunds, mostly by looking the order up and then stopping. The prompt-injection trick worked 5 of 5 times before and 2 of 5 times now. That's the kind of swing only repeated runs reveal.
 
 ## At a glance
 
@@ -232,6 +255,7 @@ What I learned:
 - [ ] Compare a bigger model (7B/8B) on the same scenarios.
 - [ ] Calibrate an AI judge against my own hand labels for open-ended replies (template in `evals/graders.py`).
 - [x] Run the tests automatically on every change (GitHub Actions, see `.github/workflows/ci.yml`).
+- [x] Re-run the same model and compare (above): the weak spot is stable, the headline number is within noise.
 - [ ] More evals: argument validity, injection hidden in tool output, paraphrase robustness.
 
 ---
@@ -295,9 +319,9 @@ run_evals.py         THE HARNESS: command line on top of the runner; writes the 
 regrade.py           re-grades a saved run with the v2 checks, offline (no model needed)
 report_html.py       THE HARNESS: builds the before/after HTML report
 api/main.py          FastAPI service: start a run, stream its events, serve the 3D page
-web/                 the 3D replay page (plain Three.js, no build step)
-tests/               41 tests: the shop's rules, the graders, the runner and the API
-results/             latest report and raw data
+web/                 the 3D replay page (plain Three.js, no build step); web/policy.js mirrors the shop's refund rules
+tests/               44 tests: the shop's rules, the graders, the runner, the API, and that the page's policy copy matches the shop
+results/             recorded report and raw data; results/rerun-2026-11-13/ is the second run
 docs/                infographics and screenshots of the run
 ```
 

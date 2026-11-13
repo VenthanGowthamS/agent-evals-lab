@@ -82,7 +82,8 @@ const ASSETS = window.ASSET_BASE || './assets/';
 const manager3d = new THREE.LoadingManager();
 manager3d.onProgress = (url, done, total) => { $('msg').textContent = `Loading the 3D shop… ${Math.round(done / total * 100)}%`; };
 const gltfLoader = new GLTFLoader(manager3d), texLoader = new THREE.TextureLoader(manager3d), hdrLoader = new RGBELoader(manager3d);
-const loadGltf = (path) => gltfLoader.loadAsync(ASSETS + path).catch((e) => { console.warn('model failed', path, e); return null; });
+let assetFailures = 0;
+const loadGltf = (path) => gltfLoader.loadAsync(ASSETS + path).catch((e) => { console.warn('model failed', path, e); assetFailures++; return null; });
 async function pbr(name, maps = ['diff', 'nor']) {
   const tex = async (m, srgb) => {
     const t = await texLoader.loadAsync(`${ASSETS}textures/${name}/${m}.jpg`).catch(() => null); if (!t) return null;
@@ -295,6 +296,11 @@ async function buildWorld() {
   lblAgent = textSprite('AI agent', { size: 0.3, color: '#dcc8ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblAgent);
   lblManager = textSprite('Manager (human)', { size: 0.28, color: '#e3d4ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblManager);
   scene.traverse((o) => { if (o.isMesh && o !== base) { o.castShadow = true; o.receiveShadow = true; } });
+  if (assetFailures || !hdr) {   // say so, rather than quietly showing stand-in shapes
+    const n = document.createElement('div'); n.id = 'assetnote';
+    n.textContent = `The 3D models could not load here (${assetFailures} of 11 failed), so simple stand-ins are shown. Open the GitHub Pages version or run it locally to see the real scene.`;
+    document.body.append(n);
+  }
 }
 
 // ---------- results wall ----------

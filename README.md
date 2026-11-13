@@ -11,11 +11,12 @@ I built a small AI "customer-support agent" that can refund orders. Then I built
 
 > **[Open the 3D replay](https://venthangowthams.github.io/agent-evals-lab/web/)** · no install, works on a phone
 
-**What you see:** a customer walks into a pretend shop and asks the AI agent (a real small model, `qwen2.5:3b`) for something. The agent can only act through three tools, and you watch it use them: it pulls the parcel off the **order shelf** (`lookup_order`), takes a refund to the **till** (`issue_refund`), or knocks on the **manager's office** (`escalate_to_human`), and the manager, a human, steps out. Then it walks back and gives its reply, and the five **grader lamps** score the run.
+**What you see:** a customer walks into a pretend shop and asks the AI agent, a robot driven by a real small model (`qwen2.5:3b`), for something. The agent can only act through three tools, and you watch it use them: it pulls the parcel off the **order shelf** (`lookup_order`), takes a refund to the **till** (`issue_refund`), or knocks on the **manager's office** (`escalate_to_human`), and the manager, a human, steps out. Then it walks back and gives its reply, and the five **grader lamps** score the run.
 
 - **The refund policy, made visible.** Every refund passes through a policy check at the till with four lights: the order exists, it was delivered, within 30 days, and the amount fits what is left of the total. The side panel shows each rule passing or failing with the real numbers, for example "$500 asked, only $40 of $40 left". A refund the shop refuses bounces back.
 - **The loop, live.** The "How it works" panel follows the loop being tested, one step at a time: customer asks, agent decides, tool call, shop answers, graders score.
 - **Every block on the wall is one real run:** green passed, red failed. Click any block to replay it, or use *Next failed*. Links like `?play=over_total:1` open a given run.
+- **Real 3D models:** a rigged, animated robot, customer and manager, a real cash register, display shelf and parcels, a parquet floor and plaster walls, lit by an indoor HDRI. All are free CC0/CC BY assets ([credits](web/assets/CREDITS.md)), fetched by `scripts/fetch_assets.py`, following the approach of the CrisisCraft project.
 - **Two recorded runs of the same model** to switch between (see below), and a **live mode** when you run it locally.
 
 v2 also adds two extra checks, failure labels and uncertainty ranges. They were applied to the same 60 recorded runs, with no new model calls and no change to any existing grade:
@@ -320,6 +321,7 @@ regrade.py           re-grades a saved run with the v2 checks, offline (no model
 report_html.py       THE HARNESS: builds the before/after HTML report
 api/main.py          FastAPI service: start a run, stream its events, serve the 3D page
 web/                 the 3D replay page (plain Three.js, no build step); web/policy.js mirrors the shop's refund rules
+web/assets/          3D models, textures and HDRI (see web/assets/CREDITS.md); scripts/fetch_assets.py re-downloads them
 tests/               44 tests: the shop's rules, the graders, the runner, the API, and that the page's policy copy matches the shop
 results/             recorded report and raw data; results/rerun-2026-11-13/ is the second run
 docs/                infographics and screenshots of the run

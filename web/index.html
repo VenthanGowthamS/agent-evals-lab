@@ -23,8 +23,8 @@
   .chip.bad b { color:var(--fail); } .chip.warn b { color:var(--warn); } .chip.good b { color:var(--pass); }
   aside { position:fixed; top:var(--top,88px); bottom:76px; z-index:2; background:var(--panel); backdrop-filter:blur(8px);
           border:1px solid var(--line); border-radius:14px; padding:14px 16px; overflow:auto; }
-  #panel { left:14px; width:min(350px,calc(100vw - 28px)); }
-  #side { right:14px; width:300px; }
+  #panel { left:14px; width:min(330px,calc(100vw - 28px)); }
+  #side { right:14px; width:290px; }
   #side.hidden { display:none; }
   aside h2 { font-size:15px; margin:0 0 2px; word-break:break-word; }
   aside .meta { color:var(--quiet); font-size:12.5px; margin-bottom:10px; }
@@ -120,7 +120,7 @@
   }
   @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 </style>
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/controls/": "./vendor/" } }</script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }</script>
 </head>
 <body>
 <canvas id="scene" aria-label="3D view of a pretend shop's refund desk and the wall of eval results"></canvas>

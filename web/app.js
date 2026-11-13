@@ -2,6 +2,8 @@
 // Plain Three.js, no build step: open web/index.html through any static server.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { ORDERS, RULES, checkRefund } from './policy.js';
 
 const $ = (id) => document.getElementById(id);
@@ -37,16 +39,16 @@ const canvas = $('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.82;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0e1320);
 scene.fog = new THREE.Fog(0x0e1320, 48, 130);
 const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 200);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.maxPolarAngle = Math.PI * 0.47; controls.minDistance = 6; controls.maxDistance = 60;
-controls.target.set(0.5, 2.6, -3.6);
-scene.add(new THREE.HemisphereLight(0xe4ecff, 0x20283a, 0.95));
-const sun = new THREE.DirectionalLight(0xfff4e6, 1.6); sun.position.set(7, 16, 11); sun.castShadow = true;
+controls.target.set(-0.6, 2.4, -1.4);
+scene.add(new THREE.HemisphereLight(0xe4ecff, 0x20283a, 0.4));
+const sun = new THREE.DirectionalLight(0xfff4e6, 1.25); sun.position.set(7, 16, 11); sun.castShadow = true;
 sun.shadow.mapSize.set(1536, 1536); Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 14, bottom: -14, near: 1, far: 50 });
 sun.shadow.bias = -0.0005; sun.shadow.camera.updateProjectionMatrix(); scene.add(sun);
 const fill = new THREE.DirectionalLight(0x9fb8ff, 0.35); fill.position.set(-10, 6, 8); scene.add(fill);
@@ -73,190 +75,230 @@ function textSprite(text, { size = 0.42, color = '#e8ecf5', bg = null, weight = 
   s.scale.set(size * w / 64, size, 1); s.renderOrder = 2; return s;
 }
 
+// ---------- assets ----------
+// Real 3D models and materials, the way CrisisCraft does it: CC0 Poly Haven props, PBR textures and an
+// HDRI for lighting, plus rigged, animated characters. Sources and licences: web/assets/CREDITS.md.
+const ASSETS = window.ASSET_BASE || './assets/';
+const manager3d = new THREE.LoadingManager();
+manager3d.onProgress = (url, done, total) => { $('msg').textContent = `Loading the 3D shop… ${Math.round(done / total * 100)}%`; };
+const gltfLoader = new GLTFLoader(manager3d), texLoader = new THREE.TextureLoader(manager3d), hdrLoader = new RGBELoader(manager3d);
+const loadGltf = (path) => gltfLoader.loadAsync(ASSETS + path).catch((e) => { console.warn('model failed', path, e); return null; });
+async function pbr(name, maps = ['diff', 'nor']) {
+  const tex = async (m, srgb) => {
+    const t = await texLoader.loadAsync(`${ASSETS}textures/${name}/${m}.jpg`).catch(() => null); if (!t) return null;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t;
+  };
+  const [map, normalMap, arm] = await Promise.all([tex('diff', true), tex('nor', false), maps.includes('arm') ? tex('arm', false) : null]);
+  const m = new THREE.MeshStandardMaterial({ map, normalMap, roughness: 0.85 });
+  if (arm) Object.assign(m, { aoMap: arm, roughnessMap: arm, metalnessMap: arm, roughness: 1, metalness: 1 });
+  return m;
+}
+// A textured box whose texture scales with its size, so wood grain and plaster look right on any shape.
+function tbox(w, h, d, material, x, y, z, parent = scene, unit = 2) {
+  const m = material.clone();
+  const cache = new Map();   // one clone per texture, so a shared arm map stays shared
+  ['map', 'normalMap', 'aoMap', 'roughnessMap', 'metalnessMap'].forEach((k) => {
+    if (!m[k]) return; if (!cache.has(m[k])) { const c = m[k].clone(); c.repeat.set(Math.max(w, d) / unit, h / unit); c.needsUpdate = true; cache.set(m[k], c); } m[k] = cache.get(m[k]);
+  });
+  return box(w, h, d, m, x, y, z, parent);
+}
+// Place a loaded model so its footprint is `size` wide (or tall) and its base sits on y.
+function placeModel(src, { x = 0, y = 0, z = 0, width, height, rotY = 0, parent = scene, clone = false }) {
+  if (!src) return null;
+  if (src.scene) src = src.scene;
+  const obj = clone ? src.clone(true) : src;
+  if (clone) obj.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
+  obj.rotation.y = rotY; obj.scale.setScalar(1); obj.position.set(0, 0, 0); obj.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(obj), size = bb.getSize(new THREE.Vector3());
+  const s = height ? height / size.y : width / Math.max(size.x, size.z);
+  obj.scale.setScalar(s); obj.updateMatrixWorld(true);
+  const bb2 = new THREE.Box3().setFromObject(obj), c = bb2.getCenter(new THREE.Vector3());
+  obj.position.set(x - c.x, y - bb2.min.y, z - c.z);
+  obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  parent.add(obj); return obj;
+}
+
 // ---------- people ----------
-// A simple jointed figure: legs and arms swing from hip and shoulder pivots so it can walk and reach.
-function human({ skin, shirt, pants, hair, shoes = 0x1c2130, hairStyle = 'short', scale = 0.9 }) {
-  const g = new THREE.Group(), rig = {};
-  const skinM = mat(skin, { roughness: 0.6 }), shirtM = mat(shirt), pantsM = mat(pants), shoeM = mat(shoes, { roughness: 0.5 });
-  const limb = (r, len) => new THREE.CapsuleGeometry(r, len, 4, 12);
-  const leg = (x) => {
-    const p = new THREE.Group(); p.position.set(x, 0.95, 0);
-    const l = new THREE.Mesh(limb(0.115, 0.6), pantsM); l.position.y = -0.42;
-    const s = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.34), shoeM); s.position.set(0, -0.89, 0.05);
-    p.add(l, s); g.add(p); return p;
-  };
-  rig.legL = leg(-0.14); rig.legR = leg(0.14);
-  box(0.46, 0.24, 0.28, pantsM, 0, 1.0, 0, g);
-  const torso = new THREE.Mesh(limb(0.25, 0.42), shirtM); torso.scale.set(1.08, 1, 0.72); torso.position.y = 1.42; g.add(torso);
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 0.16, 12), skinM); neck.position.y = 1.93; g.add(neck);
-  const head = new THREE.Group(); head.position.y = 2.13; g.add(head);
-  head.add(new THREE.Mesh(new THREE.SphereGeometry(0.2, 28, 20), skinM));
-  const eyeM = mat(0x1a1d26, { roughness: 0.3 });
-  [-0.07, 0.07].forEach((x) => { const e = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 8), eyeM); e.position.set(x, 0.03, 0.18); head.add(e); });
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), skinM); nose.position.set(0, -0.02, 0.2); head.add(nose);
-  const mouth = box(0.08, 0.014, 0.01, 0x7a3b33, 0, -0.09, 0.185, head);
-  const hairM = mat(hair, { roughness: 0.9 });
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.215, 28, 14, 0, Math.PI * 2, 0, Math.PI * 0.55), hairM);
-  cap.rotation.x = -0.25; cap.position.set(0, 0.01, -0.02); head.add(cap);
-  if (hairStyle === 'bun') { const b = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 10), hairM); b.position.set(0, 0.12, -0.2); head.add(b); }
-  const arm = (side) => {
-    const p = new THREE.Group(); p.position.set(side * 0.33, 1.78, 0); p.rotation.z = side * 0.09;
-    const a = new THREE.Mesh(limb(0.085, 0.5), shirtM); a.position.y = -0.33;
-    const h = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), skinM); h.position.y = -0.68;
-    p.add(a, h); g.add(p); return p;
-  };
-  rig.armL = arm(-1); rig.armR = arm(1);
-  Object.assign(rig, { torso, head, mouth, shirtM });
-  g.scale.setScalar(scale); g.userData.rig = rig; g.userData.height = 2.4 * scale;
-  return g;
+const mixers = [];
+// A rigged, animated character from a glTF file, scaled to a real height.
+function actor(gltf, height, clips) {
+  const root = new THREE.Group(), model = gltf.scene;
+  model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+  model.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(model, true), s = height / (bb.max.y - bb.min.y);
+  model.scale.setScalar(s); model.position.y = -bb.min.y * s; root.add(model);
+  const mixer = new THREE.AnimationMixer(model); mixers.push(mixer);
+  const actions = {};
+  for (const [key, name] of Object.entries(clips)) {
+    const clip = gltf.animations.find((c) => c.name === name || c.name.endsWith('|' + name));
+    if (clip) actions[key] = mixer.clipAction(clip);
+  }
+  let faceMesh = null; model.traverse((o) => { if (o.morphTargetDictionary && !faceMesh) faceMesh = o; });
+  root.userData = { height, actions, current: null, faceMesh };
+  if (actions.idle) { actions.idle.play(); root.userData.current = actions.idle; }
+  return root;
 }
-function setStride(p, phase, amt) {
-  const r = p.userData.rig, a = Math.sin(phase) * 0.55 * amt;
-  r.legL.rotation.x = a; r.legR.rotation.x = -a;
-  if (!p.userData.carrying) { r.armL.rotation.x = -a * 0.8; r.armR.rotation.x = a * 0.8; }
+// Fallback figure, used only if a character file fails to load.
+function simpleFigure(color, height) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, height - 0.9, 4, 16), mat(color)); body.position.y = height / 2 - 0.15; g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 24, 16), mat(0xd9a77e)); head.position.y = height - 0.2; g.add(head);
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  g.userData = { height, actions: {}, current: null }; return g;
+}
+// Switch a character's animation with a short blend. Returns the clip length in ms.
+function anim(p, key, once = false) {
+  const ud = p.userData, a = ud.actions[key]; if (!a) return 0;
+  if (ud.current === a && !once) return a.getClip().duration * 1000;
+  a.reset(); a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity); a.clampWhenFinished = once;
+  if (ud.current && ud.current !== a) ud.current.fadeOut(0.25);
+  a.fadeIn(0.25).play(); ud.current = a;
+  return a.getClip().duration * 1000;
+}
+function expression(p, name, v) {   // the robot has Angry / Surprised / Sad face morphs
+  const f = p.userData.faceMesh; if (!f) return;
+  Object.keys(f.morphTargetDictionary).forEach((k) => { f.morphTargetInfluences[f.morphTargetDictionary[k]] = k === name ? v : 0; });
 }
 
-const customer = human({ skin: 0xc68863, shirt: 0x3f7fd6, pants: 0x34425f, hair: 0x2b1d14 });
-customer.userData.carrying = true;
-customer.userData.rig.armL.rotation.x = customer.userData.rig.armR.rotation.x = -0.95;
-const parcel = box(0.42, 0.32, 0.34, 0xc89a5e, 0, 1.36, 0.42, customer);
-box(0.43, 0.05, 0.08, 0xe9dcc4, 0, 1.36, 0.42, customer).position.y = 1.53;
-scene.add(customer);
-
-const agent = human({ skin: 0xd9a77e, shirt: 0x6f52c9, pants: 0x262b3f, hair: 0x15161c, hairStyle: 'bun' });
-{ // headset and an "AI" badge, so it reads as the AI agent at a glance
-  const head = agent.userData.rig.head, hm = mat(0x22252f, { roughness: 0.4 });
-  const band = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.018, 8, 24, Math.PI), hm); band.position.y = 0.02; head.add(band);
-  [-1, 1].forEach((s) => { const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 16), hm); cup.rotation.z = Math.PI / 2; cup.position.set(s * 0.215, 0, 0); head.add(cup); });
-  const mic = box(0.018, 0.018, 0.2, hm, -0.17, -0.08, 0.1, head); mic.rotation.y = 0.6;
-  const glowM = mat(0x9cf2ff, { emissive: 0x4fd8ff, emissiveIntensity: 1.2 });
-  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), glowM); tip.position.set(-0.11, -0.09, 0.19); head.add(tip);
-  const badge = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.12), new THREE.MeshBasicMaterial({ map: canvasTex(128, 76, (c, w, h) => {
-    c.fillStyle = '#e9f6ff'; c.beginPath(); c.roundRect(0, 0, w, h, 12); c.fill(); c.fillStyle = '#5236b5'; c.font = '700 52px system-ui'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('AI', w / 2, h / 2 + 3);
-  }) }));
-  badge.position.set(0.12, 1.62, 0.2); agent.add(badge);
-}
-scene.add(agent);
-
-const manager = human({ skin: 0x8d5a3b, shirt: 0x2c3448, pants: 0x232a3a, hair: 0x9a9a9a, shoes: 0x120d0a, scale: 0.94 });
-{
-  const r = manager.userData.rig;
-  box(0.16, 0.42, 0.02, 0xf2f2f2, 0, 1.6, 0.19, manager);                 // shirt
-  const tie = box(0.06, 0.34, 0.02, 0xb8322b, 0, 1.56, 0.205, manager); tie.rotation.z = 0.02;
-  const gm = mat(0x111111, { roughness: 0.3 });
-  [-0.075, 0.075].forEach((x) => { const g = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.008, 6, 16), gm); g.position.set(x, 0.03, 0.2); r.head.add(g); });
-}
-scene.add(manager);
-
-const lblCustomer = textSprite('Customer', { size: 0.34, color: '#9ec0ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblCustomer);
-const lblAgent = textSprite('AI agent', { size: 0.34, color: '#dcc8ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblAgent);
-const lblManager = textSprite('Manager (human)', { size: 0.3, color: '#e3d4ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblManager);
+let customer, agent, manager, lblCustomer, lblAgent, lblManager, counterBox;
 function setAgentLabel(model) {
   const s = textSprite(`AI agent · ${model}`, { size: 0.34, color: '#dcc8ff', bg: 'rgba(11,15,24,.7)' });
   lblAgent.material.map.dispose(); lblAgent.material.map = s.material.map; lblAgent.scale.copy(s.scale); lblAgent.material.needsUpdate = true;
 }
 
 // ---------- the shop ----------
-const floorTex = canvasTex(256, 256, (c, w, h) => {
-  c.fillStyle = '#1a2236'; c.fillRect(0, 0, w, h); c.strokeStyle = '#232d45'; c.lineWidth = 3;
-  for (let i = 0; i <= 2; i++) { c.beginPath(); c.moveTo(i * w / 2, 0); c.lineTo(i * w / 2, h); c.stroke(); c.beginPath(); c.moveTo(0, i * h / 2); c.lineTo(w, i * h / 2); c.stroke(); }
-});
-floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(30, 20);
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(70, 46), mat(0xffffff, { map: floorTex, roughness: 0.9 }));
-floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
-const rug = new THREE.Mesh(new THREE.PlaneGeometry(19, 9.5), mat(0x222c47, { roughness: 1 })); rug.rotation.x = -Math.PI / 2; rug.position.set(-0.6, 0.005, 1.2); rug.receiveShadow = true; scene.add(rug);
+const stations = {}, parcels = {}, lampMeshes = {};
+let gate, gateLights = [], tillScreen, door, coin;
+const MANAGER_HOME = new THREE.Vector3(6.0, 0, -3.3), MANAGER_OUT = new THREE.Vector3(6.0, 0, -1.0);
+const METAL = mat(0x8c96aa, { metalness: 0.8, roughness: 0.3 });
 
-const WOOD = mat(0x6b4e37, { roughness: 0.6 }), WOOD_D = mat(0x4a3526, { roughness: 0.6 }), METAL = mat(0x8c96aa, { metalness: 0.6, roughness: 0.35 });
-const WALL = mat(0x27324f, { roughness: 0.9 });
-// back wall of the shop, low enough that the results wall stays visible behind it
-box(19, 1.1, 0.22, WALL, -0.6, 0.55, -3.6);
-box(19, 0.08, 0.32, WOOD, -0.6, 1.14, -3.6);
-// entrance on the left
-box(0.22, 3.1, 0.22, WOOD_D, -10.1, 1.55, 3.4); box(0.22, 3.1, 0.22, WOOD_D, -10.1, 1.55, 6.2); box(0.26, 0.24, 3.04, WOOD_D, -10.1, 3.1, 4.8);
-const doormat = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.4), mat(0x5a3a2a, { roughness: 1 })); doormat.rotation.x = -Math.PI / 2; doormat.position.set(-9.2, 0.01, 4.8); scene.add(doormat);
-// customer counter
-box(0.8, 1.05, 3.0, WOOD, -5.15, 0.52, 2.6); box(1.0, 0.07, 3.2, WOOD_D, -5.15, 1.08, 2.6);
-const bell = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), METAL); bell.position.set(-5.15, 1.12, 3.6); scene.add(bell);
-const sign = textSprite('REFUND DESK', { size: 0.5, color: '#ffe3b0', bg: 'rgba(60,38,24,.95)', weight: 700 }); sign.position.set(-5.15, 3.3, 2.6); scene.add(sign);
-function plant(x, z) {
-  box(0.5, 0.5, 0.5, mat(0x8a5a3c), x, 0.25, z);
-  [[0, 0.95, 0, 0.38], [0.18, 1.2, 0.1, 0.26], [-0.16, 1.18, -0.08, 0.28]].forEach(([dx, y, dz, r]) => {
-    const l = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), mat(0x2f8f5b, { roughness: 0.8, flatShading: true })); l.position.set(x + dx, y, z + dz); scene.add(l);
-  });
-}
-plant(-9.3, -2.8); plant(8.6, 3.6); plant(-9.3, 1.9);
-
-const stations = {};
 function station(key, title, x, z, standDz, build) {
   const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
-  const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.04, 40), mat(C.dim, { emissive: 0x000000 })); pad.position.set(0, 0.02, standDz - 0.2); pad.receiveShadow = true; g.add(pad);
+  const pad = new THREE.Mesh(new THREE.CircleGeometry(1.1, 48), new THREE.MeshStandardMaterial({ color: 0x2a3550, transparent: true, opacity: 0.0, emissive: 0x000000 }));
+  pad.rotation.x = -Math.PI / 2; pad.position.set(0, 0.012, standDz - 0.2); g.add(pad);
   build(g);
-  const l = textSprite(title, { size: 0.36, bg: 'rgba(11,15,24,.85)' }); l.position.set(0, 3.25, 0); g.add(l);
-  stations[key] = { g, pad, stand: new THREE.Vector3(x, 0, z + standDz), top: new THREE.Vector3(x, 3.0, z) };
+  const l = textSprite(title, { size: 0.32, bg: 'rgba(11,15,24,.85)' }); l.position.set(0, 2.95, 0.2); g.add(l);
+  stations[key] = { g, pad, stand: new THREE.Vector3(x, 0, z + standDz), top: new THREE.Vector3(x, 2.8, z) };
 }
-// order shelf with one parcel per order
-const parcels = {};
-station('lookup_order', 'Order shelf · lookup_order', -1.7, -2.3, 2.1, (g) => {
-  box(2.3, 2.5, 0.08, WOOD_D, 0, 1.25, -0.32, g);
-  [-1.1, 1.1].forEach((x) => box(0.08, 2.5, 0.7, WOOD, x, 1.25, 0, g));
-  [0.05, 0.9, 1.75, 2.5].forEach((y) => box(2.3, 0.07, 0.7, WOOD, 0, y, 0, g));
-  Object.keys(ORDERS).forEach((id, i) => {
-    const p = new THREE.Group(); p.position.set(i % 2 ? 0.5 : -0.5, i < 2 ? 1.17 : 0.32, 0.05); g.add(p);
-    const b = box(0.62, 0.48, 0.5, mat([0xc89a5e, 0xb98c56, 0xd2a86a, 0xc0905a][i], { emissive: 0x000000 }), 0, 0.02, 0, p);
-    const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.2), new THREE.MeshBasicMaterial({ map: canvasTex(128, 56, (c, w, h) => {
-      c.fillStyle = '#fbf6ea'; c.fillRect(0, 0, w, h); c.fillStyle = '#2a2a2a'; c.font = '700 34px ui-monospace,Consolas,monospace'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(id, w / 2, h / 2 + 2);
-    }) })); tag.position.set(0, 0.02, 0.26); p.add(tag);
-    parcels[id] = { p, b, home: p.position.clone() };
-  });
-});
-// till with the policy scanner in front: four lights, one per refund rule
-let gate, gateLights = [], tillScreen;
-station('issue_refund', 'Till · issue_refund', 2.6, -2.3, 2.5, (g) => {
-  box(1.7, 1.05, 0.9, WOOD, 0, 0.52, -0.1, g); box(1.85, 0.07, 1.0, WOOD_D, 0, 1.08, -0.1, g);
-  box(0.75, 0.32, 0.55, mat(0x2d3448, { metalness: 0.3 }), 0, 1.28, -0.15, g);
-  tillScreen = box(0.6, 0.38, 0.05, mat(0x0b1020, { emissive: 0x1b2a55, emissiveIntensity: 1 }), 0, 1.72, -0.3, g); tillScreen.rotation.x = -0.35;
-  gate = new THREE.Group(); g.add(gate); gate.position.z = 1.2;
-  const gm = mat(0x51618f, { emissive: 0x000000, metalness: 0.4, roughness: 0.4 });
-  [-1.0, 1.0].forEach((x) => box(0.16, 2.3, 0.2, gm, x, 1.15, 0, gate));
-  box(2.16, 0.22, 0.22, gm, 0, 2.38, 0, gate);
-  RULES.forEach((_, i) => {
-    const l = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), mat(0x2c3756, { emissive: 0x000000 })); l.position.set(-0.6 + i * 0.4, 2.38, 0.14); gate.add(l); gateLights.push(l);
-  });
-  gate.userData.mat = gm;
-  const gl = textSprite('refund policy check', { size: 0.24, color: '#c9d3ea', weight: 500 }); gl.position.set(0, 2.78, 0); gate.add(gl);
-});
-// manager's office: a wall with a door; the manager waits inside
-let door;
-const MANAGER_HOME = new THREE.Vector3(6.6, 0, -3.2), MANAGER_OUT = new THREE.Vector3(6.6, 0, -1.0);
-station('escalate_to_human', "Manager's office · escalate_to_human", 6.6, -2.3, 2.4, (g) => {
-  box(0.9, 2.7, 0.18, WALL, -1.1, 1.35, -0.2, g); box(0.9, 2.7, 0.18, WALL, 1.1, 1.35, -0.2, g); box(3.1, 0.4, 0.18, WALL, 0, 2.9, -0.2, g);
-  door = new THREE.Group(); door.position.set(-0.65, 0, -0.2); g.add(door);
-  box(1.3, 2.5, 0.08, mat(0x8a6f4d, { roughness: 0.55 }), 0.65, 1.25, 0, door);
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), METAL); knob.position.set(1.15, 1.2, 0.07); door.add(knob);
-  [-1.55, 1.55].forEach((x) => box(0.1, 3.1, 1.6, WALL, x, 1.55, -1.0, g));
-  box(3.2, 3.1, 0.1, WALL, 0, 1.55, -1.8, g);
-});
-stations.escalate_to_human.stand.x -= 1.3;   // stand beside the door, so the manager can step out
-// a refund coin that travels from the agent to the till (or bounces off the policy check)
-const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 28), mat(0xffd34d, { emissive: 0x7a5a00, metalness: 0.5, roughness: 0.3 }));
-coin.rotation.x = Math.PI / 2; coin.visible = false; scene.add(coin);
 
-// graders' bench at the front
-const lampMeshes = {};
-box(10.2, 0.1, 1.1, WOOD, 2.2, 0.95, 6.0); [-2.7, 7.1].forEach((x) => box(0.12, 0.95, 0.9, WOOD_D, x, 0.47, 6.0));
-const benchLbl = textSprite('Graders', { size: 0.34, color: '#9aa6bf', weight: 500 }); benchLbl.position.set(-3.6, 1.35, 6.0); scene.add(benchLbl);
-LAMPS.forEach(([key, name], i) => {
-  const x = -1.6 + i * 1.95;
-  box(0.08, 0.5, 0.08, METAL, x, 1.25, 6.0); box(0.4, 0.06, 0.3, METAL, x, 1.03, 6.0);
-  const m = new THREE.Mesh(new THREE.SphereGeometry(0.3, 24, 16), mat(0x3a4666, { emissive: 0x000000 })); m.position.set(x, 1.72, 6.0); scene.add(m);
-  const l = textSprite(name, { size: 0.32, color: '#c9d3ea', weight: 500 }); l.position.set(x, 2.35, 6.0); scene.add(l);
-  lampMeshes[key] = m;
-});
+async function buildWorld() {
+  const [hdr, robotG, customerG, managerG, registerG, shelfG, boxG, plantG, clockG, lampG, deskG, wetG] = await Promise.all([
+    hdrLoader.loadAsync(ASSETS + 'hdri/brown_photostudio_02.hdr').catch(() => null),
+    loadGltf('characters/robot.glb'), loadGltf('characters/customer.glb'), loadGltf('characters/manager.glb'),
+    loadGltf('models/CashRegister_01/CashRegister_01.gltf'), loadGltf('models/wooden_display_shelves_01/wooden_display_shelves_01.gltf'),
+    loadGltf('models/cardboard_box_01/cardboard_box_01.gltf'), loadGltf('models/potted_plant_04/potted_plant_04.gltf'),
+    loadGltf('models/wall_clock/wall_clock.gltf'), loadGltf('models/modern_ceiling_lamp_01/modern_ceiling_lamp_01.gltf'),
+    loadGltf('models/metal_office_desk/metal_office_desk.gltf'), loadGltf('models/WetFloorSign_01/WetFloorSign_01.gltf'),
+  ]);
+  if (hdr) { hdr.mapping = THREE.EquirectangularReflectionMapping; const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromEquirectangular(hdr).texture; hdr.dispose(); pm.dispose(); scene.environmentIntensity = 0.4; }
 
-scene.traverse((o) => { if (o.isMesh && o !== floor && o !== rug) { o.castShadow = true; o.receiveShadow = true; } });
+  const [parquet, plaster, wood] = await Promise.all([pbr('herringbone_parquet', ['diff', 'nor', 'arm']), pbr('painted_plaster_wall'), pbr('wood_table_001')]);
+  plaster.color.setHex(0xd9d4cc); wood.color.setHex(0xe8d5c0);
+  // room: parquet floor, plaster back and side walls, skirting
+  const base = new THREE.Mesh(new THREE.PlaneGeometry(90, 60), mat(0x121826, { roughness: 1 })); base.rotation.x = -Math.PI / 2; base.position.y = -0.01; base.receiveShadow = true; scene.add(base);
+  const fl = parquet.clone(); const fc = new Map();
+  ['map', 'normalMap', 'aoMap', 'roughnessMap', 'metalnessMap'].forEach((k) => { if (!fl[k]) return; if (!fc.has(fl[k])) { const c = fl[k].clone(); c.repeat.set(8, 4.5); c.needsUpdate = true; fc.set(fl[k], c); } fl[k] = fc.get(fl[k]); });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(24, 13.5), fl); floor.rotation.x = -Math.PI / 2; floor.position.set(-0.5, 0, 1.6); floor.receiveShadow = true; scene.add(floor);
+  tbox(24, 10, 0.3, plaster, -0.5, 5, -4.75, scene, 4);
+  tbox(0.3, 4.2, 9.2, plaster, -12.35, 2.1, -0.3, scene, 4);
+  box(24, 0.16, 0.06, mat(0xf2efe9, { roughness: 0.5 }), -0.5, 0.08, -4.58); box(0.06, 0.16, 9.2, mat(0xf2efe9, { roughness: 0.5 }), -12.18, 0.08, -0.3);
+  // the entrance on the left
+  const frameM = mat(0x3b2a20, { roughness: 0.5 });
+  box(0.22, 3.1, 0.22, frameM, -12.3, 1.55, 4.3); box(0.22, 3.1, 0.22, frameM, -12.3, 1.55, 6.9); box(0.3, 0.24, 2.8, frameM, -12.3, 3.1, 5.6);
+  const doormat = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.4), mat(0x4a3428, { roughness: 1 })); doormat.rotation.x = -Math.PI / 2; doormat.position.set(-11.3, 0.008, 5.6); scene.add(doormat);
+
+  // customer counter, with the parcel being returned
+  counterBox = tbox(0.85, 1.05, 3.1, wood, -4.7, 0.525, 2.6); tbox(1.05, 0.06, 3.3, wood, -4.7, 1.08, 2.6);
+  const bell = new THREE.Mesh(new THREE.SphereGeometry(0.09, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), METAL); bell.position.set(-4.7, 1.11, 3.8); scene.add(bell);
+  placeModel(boxG, { x: -4.75, y: 1.11, z: 1.6, width: 0.5, clone: true });
+  const sign = textSprite('REFUND DESK', { size: 0.46, color: '#ffe3b0', bg: 'rgba(60,38,24,.95)', weight: 700 }); sign.position.set(-4.7, 3.2, 2.6); scene.add(sign);
+
+  // order shelf: a real display shelf with one parcel per order
+  station('lookup_order', 'Order shelf · lookup_order', -1.7, -3.7, 3.5, (g) => {
+    const shelf = placeModel(shelfG, { x: 0, y: 0, z: 0, height: 2.1, rotY: Math.PI / 2, parent: g });
+    const levels = [];
+    if (shelf) {   // find the shelf boards by casting a ray down through the middle
+      g.updateMatrixWorld(true);
+      const rc = new THREE.Raycaster(new THREE.Vector3(-1.7, 4, -3.7), new THREE.Vector3(0, -1, 0));
+      rc.intersectObject(shelf, true).forEach((h) => { const y = h.point.y; if (y > 0.25 && y < 1.9 && !levels.some((l) => Math.abs(l - y) < 0.15)) levels.push(y); });
+      levels.sort((a, b) => b - a);
+    }
+    const ys = levels.length >= 2 ? [levels[0], levels[0], levels[1], levels[1]] : [1.2, 1.2, 0.5, 0.5];
+    Object.keys(ORDERS).forEach((id, i) => {
+      const p = new THREE.Group(); p.position.set(i % 2 ? 0.32 : -0.32, ys[i] - 0, 0.05); g.add(p);
+      const b = placeModel(boxG, { x: 0, y: 0, z: 0, width: 0.42, parent: p, clone: true }) || box(0.42, 0.32, 0.36, 0xc89a5e, 0, 0.16, 0, p);
+      const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.13), new THREE.MeshBasicMaterial({ map: canvasTex(128, 56, (c, w, h) => {
+        c.fillStyle = '#fbf6ea'; c.fillRect(0, 0, w, h); c.fillStyle = '#2a2a2a'; c.font = '700 34px ui-monospace,Consolas,monospace'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(id, w / 2, h / 2 + 2);
+      }) }));
+      const bb = new THREE.Box3().setFromObject(p); tag.position.set(0, (bb.max.y - p.position.y) * 0.55, bb.max.z - p.position.z + 0.004); p.add(tag);
+      const glowMats = []; p.traverse((o) => { if (o.isMesh && o !== tag) glowMats.push(o.material); });
+      parcels[id] = { p, b: { material: { emissive: new THREE.Color(), set emissiveIntensity(v) { glowMats.forEach((m) => { if (m.emissive) { m.emissive.copy(this.emissive); m.emissiveIntensity = v; } }); } } }, home: p.position.clone() };
+    });
+  });
+  // till: wooden counter, a real cash register, and the policy check arch in front
+  station('issue_refund', 'Till · issue_refund', 2.6, -3.0, 3.2, (g) => {
+    tbox(1.8, 1.0, 0.9, wood, 0, 0.5, -0.1, g); tbox(1.95, 0.06, 1.0, wood, 0, 1.03, -0.1, g);
+    const reg = placeModel(registerG, { x: 0, y: 1.06, z: -0.15, width: 0.75, rotY: 0, parent: g });
+    tillScreen = box(0.5, 0.3, 0.02, mat(0x0b1020, { emissive: 0x1b2a55, emissiveIntensity: 1 }), 0, reg ? 1.62 : 1.5, -0.55, g);
+    gate = new THREE.Group(); g.add(gate); gate.position.z = 1.3;
+    const gm = new THREE.MeshStandardMaterial({ color: 0xb8c2d6, metalness: 0.85, roughness: 0.25, emissive: 0x000000 });
+    [-1.0, 1.0].forEach((x) => box(0.12, 2.3, 0.16, gm, x, 1.15, 0, gate));
+    box(2.12, 0.2, 0.18, gm, 0, 2.38, 0, gate);
+    RULES.forEach((_, i) => { const l = new THREE.Mesh(new THREE.SphereGeometry(0.085, 16, 12), mat(0x2c3756, { emissive: 0x000000 })); l.position.set(-0.6 + i * 0.4, 2.38, 0.12); gate.add(l); gateLights.push(l); });
+    gate.userData.mat = gm;
+    const gl = textSprite('refund policy check', { size: 0.22, color: '#c9d3ea', weight: 500 }); gl.position.set(0, 2.72, 0); gate.add(gl);
+  });
+  // manager's office: plaster walls, a wooden door, a desk inside
+  station("escalate_to_human", "Manager's office · escalate_to_human", 6.0, -2.3, 2.4, (g) => {
+    tbox(0.9, 3.0, 0.18, plaster, -1.1, 1.5, -0.2, g); tbox(0.9, 3.0, 0.18, plaster, 1.1, 1.5, -0.2, g); tbox(3.1, 0.45, 0.18, plaster, 0, 2.78, -0.2, g);
+    [-1.55, 1.55].forEach((x) => tbox(0.12, 3.0, 2.1, plaster, x, 1.5, -1.25, g));
+    door = new THREE.Group(); door.position.set(-0.65, 0, -0.2); g.add(door);
+    tbox(1.3, 2.5, 0.07, wood, 0.65, 1.25, 0, door, 1.5);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), METAL); knob.position.set(1.15, 1.15, 0.06); door.add(knob);
+    const plate = textSprite('MANAGER', { size: 0.16, color: '#2a2a2a', bg: 'rgba(240,232,210,.95)' }); plate.position.set(0.65, 1.85, 0.06); door.add(plate);
+    placeModel(deskG, { x: 0, y: 0, z: -1.75, width: 1.6, rotY: Math.PI, parent: g });
+  });
+  stations.escalate_to_human.stand.x -= 1.3;   // stand beside the door, so the manager can step out
+
+  // furnishing: plants, a wall clock, ceiling lamps, a wet-floor sign
+  [[-11.4, -3.8, 1.1], [10.8, -3.8, 1.1], [-11.4, 2.2, 0.9]].forEach(([x, z, h]) => placeModel(plantG, { x, z, height: h, clone: true }));
+  placeModel(clockG, { x: -4.7, y: 3.7, z: -4.58, width: 0.6, rotY: 0 });
+  // wall lamps above the stations, each with a warm light
+  [[-4.7, -4.55], [-1.7, -4.55], [2.6, -4.55]].forEach(([x, z]) => {
+    placeModel(lampG, { x, y: 3.05, z: z + 0.25, height: 0.35, clone: true });
+    const pl = new THREE.PointLight(0xffd9a8, 2.2, 7, 1.8); pl.position.set(x, 3.0, z + 1.2); scene.add(pl);
+  });
+  placeModel(wetG, { x: -9.6, z: 3.4, height: 0.75, rotY: 0.6 });
+
+  // graders' bench at the front
+  const BZ = 6.2;   // the graders' bench stands at the front, low, so it never hides the shop
+  tbox(7.4, 0.07, 0.8, wood, 0.6, 0.7, BZ); [-2.95, 4.15].forEach((x) => box(0.08, 0.7, 0.65, METAL, x, 0.35, BZ));
+  const benchLbl = textSprite('Graders', { size: 0.3, color: '#c9d3ea', bg: 'rgba(11,15,24,.8)', weight: 600 }); benchLbl.position.set(-3.7, 1.1, BZ); scene.add(benchLbl);
+  LAMPS.forEach(([key, name], i) => {
+    const x = -2.3 + i * 1.45;
+    box(0.06, 0.3, 0.06, METAL, x, 0.88, BZ); box(0.36, 0.05, 0.28, METAL, x, 0.75, BZ);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 32, 20), new THREE.MeshPhysicalMaterial({ color: 0x3a4666, roughness: 0.15, transmission: 0, clearcoat: 1, emissive: 0x000000 }));
+    m.position.set(x, 1.2, BZ); scene.add(m);
+    const l = textSprite(name, { size: 0.24, color: '#c9d3ea', weight: 500 }); l.position.set(x, 1.7, BZ); scene.add(l);
+    lampMeshes[key] = m;
+  });
+  coin = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.04, 32), new THREE.MeshStandardMaterial({ color: 0xffd34d, metalness: 1, roughness: 0.25, emissive: 0x3a2a00 }));
+  coin.rotation.x = Math.PI / 2; coin.visible = false; scene.add(coin);
+
+  // the three characters
+  customer = customerG ? actor(customerG, 1.68, { idle: 'Idle_Neutral', walk: 'Walk', wave: 'Wave', interact: 'Interact' }) : simpleFigure(0x3f7fd6, 1.68);
+  agent = robotG ? actor(robotG, 1.55, { idle: 'Idle', walk: 'Walking', wave: 'Wave', yes: 'Yes', no: 'No', thumbs: 'ThumbsUp', reach: 'Punch', standing: 'Standing' }) : simpleFigure(0x6f52c9, 1.55);
+  manager = managerG ? actor(managerG, 1.82, { idle: 'Idle_Neutral', walk: 'Walk', wave: 'Wave', interact: 'Interact' }) : simpleFigure(0x2c3448, 1.82);
+  scene.add(customer, agent, manager);
+  lblCustomer = textSprite('Customer', { size: 0.3, color: '#9ec0ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblCustomer);
+  lblAgent = textSprite('AI agent', { size: 0.3, color: '#dcc8ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblAgent);
+  lblManager = textSprite('Manager (human)', { size: 0.28, color: '#e3d4ff', bg: 'rgba(11,15,24,.7)' }); scene.add(lblManager);
+  scene.traverse((o) => { if (o.isMesh && o !== base) { o.castShadow = true; o.receiveShadow = true; } });
+}
 
 // ---------- results wall ----------
-const wall = new THREE.Group(); wall.position.set(-0.4, 1.4, -11); wall.scale.setScalar(1.15); scene.add(wall);   // raised, so it reads above the shop
+const wall = new THREE.Group(); wall.position.set(-0.3, 3.75, -4.3); wall.scale.setScalar(0.7); scene.add(wall);   // a results display mounted on the shop's back wall
 let data = {}, order = [], blocks = [], current = null, model = 'qwen2.5:3b';
 const blockGeo = new THREE.BoxGeometry(1.0, 0.62, 0.5);
 function wilson(p, n) { if (!n) return [0, 1]; const z = 1.96, ph = p / n, d = 1 + z * z / n, c = (ph + z * z / (2 * n)) / d,
@@ -272,7 +314,8 @@ function buildWall() {
   const ids = Object.keys(data);
   const grouped = GROUPS.map((g) => ids.filter((id) => data[id].capability === g)).concat([ids.filter((id) => !GROUPS.includes(data[id].capability))]);
   const total = ids.length * 1.25 + grouped.filter((g) => g.length).length * 0.7;
-  const board = box(Math.max(total + 1.6, 12), 8.6, 0.2, mat(0x141b2c, { roughness: 0.95 }), 0, 4.2, -0.5, wall); board.receiveShadow = true;
+  const board = box(Math.max(total + 1.6, 12), 8.0, 0.2, mat(0x10141f, { roughness: 0.35, metalness: 0.2 }), 0, 3.95, -0.25, wall); board.receiveShadow = true;
+  box(Math.max(total + 1.6, 12) + 0.3, 8.3, 0.12, mat(0x2b2f38, { metalness: 0.7, roughness: 0.35 }), 0, 3.95, -0.37, wall);
   const title = textSprite('Results wall · every block is one graded run', { size: 0.42, color: '#c9d3ea', weight: 600 }); title.position.set(0, 8.1, -0.3); wall.add(title);
   let x = -total / 2 + 0.6;
   grouped.forEach((g, gi) => {
@@ -376,23 +419,28 @@ async function turn(p, angle, my, ms = 220) {
 }
 async function walk(p, to, my) {
   const from = p.position.clone(); from.y = 0; const dist = from.distanceTo(to); if (dist < 0.05) return;
-  await turn(p, angleTo(p, to), my);
-  await tween(Math.max(300, dist * 260), my, (k) => {
-    p.position.lerpVectors(from, to, k); const ph = k * dist * 3.4; setStride(p, ph, 1); p.position.y = Math.abs(Math.sin(ph)) * 0.035;
-  }, false);
-  setStride(p, 0, 0); p.position.y = 0;
+  anim(p, 'walk');
+  try {
+    await turn(p, angleTo(p, to), my, 260);
+    await tween(Math.max(400, dist / 2.3 * 1000), my, (k) => { p.position.lerpVectors(from, to, k); }, false);
+  } finally { anim(p, 'idle'); }
 }
+// play a one-off gesture (wave, nod, shake head…) and return to idle
+async function gesture(p, key, my, maxMs = 1600) { const ms = anim(p, key, true); if (!ms) return; await wait(Math.min(ms, maxMs), my); anim(p, 'idle'); }
 const face = (p, x, z, my) => turn(p, Math.atan2(x - p.position.x, z - p.position.z), my);
 const fly = (obj, from, to, ms, my, arc = 1.6) => { obj.visible = true; return tween(ms, my, (k) => { obj.position.lerpVectors(from, to, k); obj.position.y += Math.sin(k * Math.PI) * arc; }); };
-function glow(mesh, color, on = 1) { mesh.material.emissive.setHex(color); mesh.material.emissiveIntensity = on; }
-const handOf = (p, side = 'armR') => { const v = new THREE.Vector3(0, -0.68, 0); p.userData.rig[side].localToWorld(v); return v; };
-async function reach(p, my, up = 1.5) { const a = p.userData.rig.armR; await tween(260, my, (k) => { a.rotation.x = -up * k; }); }
-async function unreach(p, my) { const a = p.userData.rig.armR, a0 = a.rotation.x; await tween(220, my, (k) => { a.rotation.x = a0 * (1 - k); }); }
+function glow(mesh, color, on = 1) {
+  const m = mesh.material; m.emissive.setHex(color); m.emissiveIntensity = on;
+  if (m.transparent && m.opacity !== undefined) { m.opacity = on ? 0.5 : 0; if (on) m.color.setHex(color); }   // floor rings show only while lit
+}
+const handOf = (p) => p.localToWorld(new THREE.Vector3(0.22, p.userData.height * 0.62, 0.42));
+async function reach(p, my) { anim(p, 'reach', true); await wait(450, my); }
+async function unreach(p, my) { anim(p, 'idle'); await wait(150, my); }
 
-const AGENT_HOME = new THREE.Vector3(-3.7, 0, 2.6), CUSTOMER_SPOT = new THREE.Vector3(-6.55, 0, 2.6), ENTRANCE = new THREE.Vector3(-11.5, 0, 4.8);
+const AGENT_HOME = new THREE.Vector3(-3.25, 0, 2.6), CUSTOMER_SPOT = new THREE.Vector3(-6.05, 0, 2.6), ENTRANCE = new THREE.Vector3(-11.5, 0, 4.8);
 function resetShop() {
-  agent.position.copy(AGENT_HOME); agent.rotation.y = -Math.PI / 2; setStride(agent, 0, 0); agent.userData.rig.armR.rotation.x = 0;
-  customer.position.copy(ENTRANCE); customer.rotation.y = Math.PI / 2; parcel.visible = true;
+  agent.position.copy(AGENT_HOME); agent.rotation.y = -Math.PI / 2; anim(agent, 'idle'); expression(agent, null, 0);
+  customer.position.copy(ENTRANCE); customer.rotation.y = Math.PI / 2; anim(customer, 'idle'); anim(manager, 'idle');
   manager.position.copy(MANAGER_HOME); manager.rotation.y = 0; manager.visible = false; door.rotation.y = 0;
   coin.visible = false; unsayAll();
   Object.values(stations).forEach((s) => glow(s.pad, 0x000000, 0));
@@ -476,12 +524,14 @@ async function refundAt(st, s, already, my) {
     await fly(coin, gatePos, till, 360, my, 0.2);
     say('station', () => st.top, describe(s.name, res), 'card ok');
     await fly(coin, till, customer.position.clone().add(new THREE.Vector3(0.3, 1.2, 0)), 900, my, 2.4); coin.visible = false;
+    gesture(agent, 'yes', my).catch(() => {}); gesture(customer, 'wave', my).catch(() => {});
     already[a.order_id] = (already[a.order_id] || 0) + a.amount;
   } else {
     glow({ material: gate.userData.mat }, C.warn, 1.4); glow(st.pad, C.warn, 0.9); glow(tillScreen, C.fail, 1.2);
     stage('shop', 'Blocked: ' + (res.error || 'refused'));
     say('station', () => st.top, 'BLOCKED · ' + (res.error || 'refused'), 'card blocked');
     await fly(coin, gatePos, handOf(agent), 420, my, 0.7); coin.visible = false;
+    expression(agent, 'Surprised', 0.8); await gesture(agent, 'no', my, 1300); expression(agent, null, 0);
   }
   await unreach(agent, my);
 }
@@ -496,7 +546,8 @@ async function play(id, i) {
     // 1. the customer walks in and asks
     stage('customer', short(prompt, 120)); $('loop').scrollIntoView({ block: 'nearest' });
     await walk(customer, CUSTOMER_SPOT, my); await face(customer, AGENT_HOME.x, AGENT_HOME.z, my);
-    say('customer', above(customer), short(prompt, 110)); await wait(1500, my);
+    say('customer', above(customer), short(prompt, 110)); anim(customer, 'interact', true);
+    gesture(agent, 'wave', my).catch(() => {}); await wait(1600, my); anim(customer, 'idle');
     await stepDone(my);
     const already = {};
     for (let n = 0; n < steps.length; n++) {
@@ -516,13 +567,14 @@ async function play(id, i) {
       } else if (s.name === 'escalate_to_human') {
         glow(st.pad, C.agent, 0.9); stage('shop', 'Manager called in');
         await tween(500, my, (k) => { door.rotation.y = -k * 1.3; });
-        manager.visible = true; await walk(manager, MANAGER_OUT, my);
+        manager.visible = true; await walk(manager, MANAGER_OUT, my); await face(manager, agent.position.x, agent.position.z, my);
+        gesture(manager, 'wave', my).catch(() => {});
         const reason = (s.args && s.args.reason) || '';
         setManager(`Called in by the agent${reason ? `: “${short(reason, 90)}”` : '.'}`, true); $('mgr').scrollIntoView({ block: 'nearest' });
         say('manager', above(manager), "I'll take it from here.", 'mgr');
       } else {   // lookup_order
         const pc = parcels[s.args && s.args.order_id];
-        await reach(agent, my, pc && pc.home.y > 1 ? 1.9 : 1.2);
+        await reach(agent, my);
         highlightOrder(s.args && s.args.order_id);
         if (pc) { glow(pc.b, C.accent, 0.6); await tween(320, my, (k) => { pc.p.position.set(pc.home.x, pc.home.y + 0.18 * k, pc.home.z + 0.3 * k); }); }
         glow(st.pad, ok ? C.accent : C.warn, 0.9);
@@ -553,6 +605,7 @@ async function play(id, i) {
       stage('graders', `${name}: ${g.pass ? 'pass' : 'fail'}`);
       await wait(380, my);
     }
+    if (t.grades.pass) gesture(agent, 'thumbs', my).catch(() => {}); else { expression(agent, 'Sad', 0.9); gesture(agent, 'no', my).catch(() => {}); }
     const v = $('verdict'); v.className = t.grades.pass ? 'pass' : 'fail'; v.innerHTML = '';
     v.append(t.grades.pass ? 'PASS · did the right thing' : 'FAIL');
     const small = document.createElement('small');
@@ -614,7 +667,7 @@ function resize() {
   camera.setViewOffset(fw, h + padY, s >= 0 ? 0 : -s, padY, w, h); camera.updateProjectionMatrix();
   if (!resize.done) {   // pull back further when the gap between the panels is narrow, so the whole shop fits
     const gap = Math.max(320, w - L - R), far = narrow ? 1.3 : Math.min(1.7, Math.max(1, 900 / gap));
-    camera.position.set(0.5, (narrow ? 20 : 11) * far, (narrow ? 42 : 20.5) * far); resize.done = true;
+    camera.position.set(-0.6, (narrow ? 15 : 8.0) * far, (narrow ? 33 : 16.4) * far); resize.done = true;
   }
   // keep the side panels below the header, however many rows the chips wrap to
   document.documentElement.style.setProperty('--top', Math.ceil(document.querySelector('header').getBoundingClientRect().bottom + 6) + 'px');
@@ -624,15 +677,12 @@ if (innerWidth < 1180) $('side').classList.add('hidden');
 resize();
 const v3 = new THREE.Vector3(), clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
-  const t = clock.getElapsedTime();
+  const dt = Math.min(clock.getDelta(), 0.1);
   controls.update();
-  for (const [p, l, ph] of [[customer, lblCustomer, 0], [agent, lblAgent, 1.7], [manager, lblManager, 3.1]]) {
+  if (!agent) { renderer.render(scene, camera); return; }            // still loading the models
+  mixers.forEach((m) => m.update(paused && !stepRequests ? 0 : dt * speed));
+  for (const [p, l] of [[customer, lblCustomer], [agent, lblAgent], [manager, lblManager]]) {
     l.visible = p.visible; l.position.set(p.position.x, p.userData.height + 0.32, p.position.z);
-    p.userData.rig.torso.scale.y = 1 + Math.sin(t * 2 + ph) * 0.012;             // breathing
-  }
-  // the speaker's mouth moves while their bubble is up
-  for (const [p, key] of [[customer, 'customer'], [agent, 'agent'], [manager, 'manager']]) {
-    const b = bubbles.get(key); p.userData.rig.mouth.scale.y = b && b.anchor ? 1 + Math.abs(Math.sin(t * 14)) * 3 : 1;
   }
   for (const b of bubbles.values()) {
     if (!b.anchor) continue;
@@ -660,7 +710,8 @@ function show(newData, label) {
   if (first) play(first.id, first.i);
 }
 async function load() {
-  buildPolicyList(); resetShop();
+  buildPolicyList();
+  await buildWorld(); resetShop();
   const params = new URLSearchParams(location.search), run = params.get('run');
   if (run) {
     try { data = await getJson(`/api/runs/${encodeURIComponent(run)}`); } catch (e) { data = null; }

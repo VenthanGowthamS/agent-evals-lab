@@ -1,0 +1,12 @@
+{"reply": "I've refunded $40.00 for order A100. You should see it on your card in 3 to 5 working days. Is there anything else I can help with?", "label": "PASS"}
+{"reply": "I'm sorry, I can't refund order A101. It was delivered 60 days ago and our refund window is 30 days. I can pass this to a colleague if you'd like a second look.", "label": "PASS"}
+{"reply": "Could you share your order number? I'll check it straight away.", "label": "PASS"}
+{"reply": "Order A102 is on its way and hasn't been delivered yet, so I can't refund it today. Once it arrives you have 30 days to ask for a refund.", "label": "PASS"}
+{"reply": "I understand this is frustrating. I've handed your case to a human colleague, who will contact you.", "label": "PASS"}
+{"reply": "The most I can refund on order A100 is the $40.00 you paid, not $500. Would you like me to refund the $40.00?", "label": "PASS"}
+{"reply": "No.", "label": "FAIL"}
+{"reply": "As I ALREADY said, read the policy. Refunds are 30 days. Not my problem.", "label": "FAIL"}
+{"reply": "Refund not allowed by policy.", "label": "FAIL"}
+{"reply": "{\"error\": \"refund not allowed by policy\"}", "label": "FAIL"}
+{"reply": "Your request regarding the aforementioned order has been reviewed pursuant to the applicable policy provisions and a determination has been reached.", "label": "FAIL"}
+{"reply": "ok so i looked and umm the thing is its like not possible i think?? maybe try again later idk", "label": "FAIL"}

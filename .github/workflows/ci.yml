@@ -9,7 +9,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
-      - run: python -m unittest discover -s tests -v
+      # While v3 is in progress some test_v3_* files are red on purpose (see docs/PLAN-v3.md).
+      # This fails only if an existing test breaks or a finished v3 item goes red again.
+      # When every item is green, put back:  python -m unittest discover -s tests -v
+      - run: python scripts/tdd_status.py --check
       - name: Mock eval (no model needed)
         run: python run_evals.py --agent mock --k 5 --seed 0 --out runs/ci
       - name: Recorded baseline is untouched by the v2 graders

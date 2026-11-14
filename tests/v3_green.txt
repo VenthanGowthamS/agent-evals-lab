@@ -1,0 +1,2 @@
+# v3 test modules that are finished. One name per line. CI fails if any of these goes red again.
+# Add a module here in the same commit that makes it pass (the "green" commit).

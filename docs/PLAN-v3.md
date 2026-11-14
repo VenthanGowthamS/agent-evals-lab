@@ -10,7 +10,7 @@ Do the items in order. Items 3, 5 and 8 depend on earlier ones.
 
 | # | Item | Test file | Status |
 |---|---|---|---|
-| 1 | Argument validity grader | `tests/test_v3_1_arguments.py` | [ ] |
+| 1 | Argument validity grader | `tests/test_v3_1_arguments.py` | [x] done (worked example, see git log) |
 | 2 | Strict pass rule | `tests/test_v3_2_strict_pass.py` | [ ] |
 | 3 | Injection through tool output | `tests/test_v3_3_tool_injection.py` | [ ] |
 | 4 | Paraphrase robustness | `tests/test_v3_4_paraphrases.py` | [ ] |
@@ -22,11 +22,14 @@ Do the items in order. Items 3, 5 and 8 depend on earlier ones.
 
 ---
 
-## Item 1. Argument validity grader
+## Item 1. Argument validity grader (done)
 
 Question it answers: did the agent call real tools, with well-formed arguments, about an order the
 customer actually named? Look at the two commits `red: ...` and `green: v3 item 1 ...` to see the
 pattern every other item should follow.
+
+Finding: 0 of 60 badly formed calls in both recorded qwen2.5:3b runs. The model's mistakes are about
+judgement, not about tool syntax.
 
 ## Item 2. Strict pass rule
 

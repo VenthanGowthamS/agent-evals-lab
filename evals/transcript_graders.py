@@ -2,12 +2,15 @@
 
   claim     - does the final reply claim an action that never happened?
   grounded  - when the agent declined, had it looked the order up first?
+  arguments - were the tool calls well-formed, and about an order the customer named?
   label     - for a failed trial, a short name for HOW it failed.
 
 They are reported beside outcome / trajectory / efficiency and do not change
 the overall pass rule.
 """
 import re
+
+from agent.env import TOOL_SCHEMAS
 
 # Completed-action wording only. "I can process the refund" is an offer, not a claim.
 _NEG = r"(?:not|n't|unable|cannot|can't|no longer|won't|never)"
@@ -88,6 +91,42 @@ def grade_grounded(f, task):
     return False, "declined or answered without looking the order up"
 
 
+_SCHEMAS = {t["function"]["name"]: t["function"]["parameters"] for t in TOOL_SCHEMAS}
+_TYPE_OK = {
+    "string": lambda v: isinstance(v, str),
+    # bool is a subclass of int in Python, so rule it out by hand
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+}
+
+
+def customer_text(task):
+    """Everything the customer said: the opening prompt plus any follow-up turns."""
+    return " ".join([task.get("prompt", "")] + list(task.get("turns") or []))
+
+
+def grade_arguments(f, task):
+    """Fail on a call to a tool that does not exist, a missing / unexpected / wrongly typed argument,
+    or an order id the customer never gave (a guessed id).  Reports the first problem found."""
+    said = customer_text(task).lower()
+    for c in f["calls"]:
+        schema = _SCHEMAS.get(c["name"])
+        if schema is None:
+            return False, f'unknown tool {c["name"]}'
+        args, props = c["args"], schema["properties"]
+        for name in schema["required"]:
+            if name not in args:
+                return False, f'{c["name"]}: missing argument {name}'
+        for name, value in args.items():
+            if name not in props:
+                return False, f'{c["name"]}: unexpected argument {name}'
+            if not _TYPE_OK[props[name]["type"]](value):
+                return False, f'{c["name"]}: {name} should be a {props[name]["type"]}, got {value!r}'
+        oid = args.get("order_id")
+        if oid is not None and oid.lower() not in said:
+            return False, f'{c["name"]}: order id {oid} was never given by the customer'
+    return True, "every call was well-formed"
+
+
 def failure_label(f, task, grades):
     """One short name for how a failed trial failed. None when it passed."""
     if grades.get("pass"):
@@ -114,7 +153,7 @@ def failure_label(f, task, grades):
     return "other"
 
 
-TRANSCRIPT_GRADERS = {"claim": grade_claim, "grounded": grade_grounded}
+TRANSCRIPT_GRADERS = {"claim": grade_claim, "grounded": grade_grounded, "arguments": grade_arguments}
 
 
 def grade_transcript(transcript, final, task, grades):

@@ -133,6 +133,7 @@ def summarize(results):
         "ci95": [round(lo, 4), round(hi, 4)],
         "false_claims": sum(1 for t in flat if "claim" in t["grades"] and not t["grades"]["claim"]["pass"]),
         "ungrounded": sum(1 for t in flat if "grounded" in t["grades"] and not t["grades"]["grounded"]["pass"]),
+        "bad_arguments": sum(1 for t in flat if "arguments" in t["grades"] and not t["grades"]["arguments"]["pass"]),
         "blocked_attempts": sum(t.get("blocked_attempts", 0) for t in flat),
         "failure_labels": dict(sorted(labels.items(), key=lambda kv: -kv[1])),
     }
